@@ -14,16 +14,6 @@ The downloader selects the best available H.264 stream up to **1080p**, preferri
 
 The default limits are 1080p, 900 seconds, and 512 MiB. Change them in **Settings → Mod Settings → Theater**. Temporary HLS segments and the completed MP4 require sufficient free storage.
 
-### Meta Quest Browser session
-
-Android isolates the browser from Beat Saber. Sign in to YouTube in Meta Quest Browser, leave the YouTube tab open, connect the Quest over USB with debugging enabled, and run:
-
-```powershell
-pwsh scripts/export-quest-youtube-cookies.ps1
-```
-
-The script reads YouTube cookies through the official browser DevTools interface, saves them to `private/youtube-cookies.txt`, and imports the file to `/sdcard/ModData/com.beatgames.beatsaber/Mods/bstheater/`. Cookie values are not printed or included in the QMOD. The mod sends the session only over HTTPS to youtube.com; account data is not sent to CDNs or third-party services. Cookie updates received from YouTube are saved locally. If the session expires or is rejected, export the cookies again and press Retry.
-
 ## Build
 
 The build requires PowerShell 7, a JDK, CMake/Ninja, QPM, Android NDK r27d, Android API 33 `android.jar`, R8, and `desugar_jdk_libs_nio`. The build scripts expect the local QPM, Android, and R8 tools under a sibling `../tools` directory. Native dependencies are declared in the QPM manifests. Java dependencies can be downloaded and SHA-256 verified with `scripts/restore-java.ps1`.
