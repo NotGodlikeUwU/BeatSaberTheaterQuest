@@ -1,0 +1,18 @@
+.section .rodata,"a",@progbits
+.balign 8
+.global bstheater_download_dex_start
+.global bstheater_download_dex_end
+.hidden bstheater_download_dex_start
+.hidden bstheater_download_dex_end
+bstheater_download_dex_start:
+.incbin "@CMAKE_CURRENT_SOURCE_DIR@/java/bstheater-download.dex"
+bstheater_download_dex_end:
+.balign 8
+.global bstheater_desugar_dex_start
+.global bstheater_desugar_dex_end
+.hidden bstheater_desugar_dex_start
+.hidden bstheater_desugar_dex_end
+bstheater_desugar_dex_start:
+.incbin "@CMAKE_CURRENT_SOURCE_DIR@/java/bstheater-desugar.dex"
+bstheater_desugar_dex_end:
+.section .note.GNU-stack,"",@progbits

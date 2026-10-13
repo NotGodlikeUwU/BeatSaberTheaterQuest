@@ -1,0 +1,11 @@
+{
+  "videoFile": "video.mp4",
+  "offset": 0,
+  "playbackSpeed": 1.0,
+  "loop": false,
+  "screenPosition": { "x": 0, "y": 12.4, "z": 67.8 },
+  "screenRotation": { "x": -7, "y": 0, "z": 0 },
+  "screenHeight": 25,
+  "screenCurvature": 0,
+  "screenSubsurfaces": 32
+}

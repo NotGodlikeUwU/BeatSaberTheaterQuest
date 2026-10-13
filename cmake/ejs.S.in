@@ -1,0 +1,14 @@
+.section .rodata,"a",@progbits
+.balign 8
+.global bstheater_ejs_lib_start,bstheater_ejs_lib_end,bstheater_ejs_core_start,bstheater_ejs_core_end
+.hidden bstheater_ejs_lib_start,bstheater_ejs_lib_end,bstheater_ejs_core_start,bstheater_ejs_core_end
+bstheater_ejs_lib_start:
+.incbin "@CMAKE_CURRENT_SOURCE_DIR@/resources/ejs/yt.solver.lib.js"
+bstheater_ejs_lib_end:
+.byte 0
+.balign 8
+bstheater_ejs_core_start:
+.incbin "@CMAKE_CURRENT_SOURCE_DIR@/resources/ejs/yt.solver.core.js"
+bstheater_ejs_core_end:
+.byte 0
+.section .note.GNU-stack,"",@progbits

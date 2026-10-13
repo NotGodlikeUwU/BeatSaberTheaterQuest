@@ -1,0 +1,47 @@
+# Local credentials and captured data
+private/
+reference/
+
+# QPM and Android build output
+build/
+extern/
+*.qmod
+mod.json
+ndkpath.txt
+qpm_defines.cmake
+extern.cmake
+
+# Java dependencies and generated classes/DEX files
+java/libs/
+java/classes/
+java/test-classes/
+java/dex/
+java/desugar/
+java/merged/
+java/scratch-*/
+java/*.dex
+java/downloader.jar
+
+# Test output and per-run scratch data
+tests/*.exe
+tests/*.obj
+tests/build-tests.cmd
+tests/scratch-*/
+tests/prepare-*/
+
+# Local output
+*.log
+*.zip
+.cache/
+.vscode/
+.idea/
+cmake-build-*/
+out/
+*.o
+*.obj
+*.so
+*.dll
+*.a
+*.lib
+*.exe
+*.class
