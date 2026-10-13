@@ -31,6 +31,7 @@ DECLARE_CLASS_CODEGEN(Theater, VideoMenuView, UnityEngine::MonoBehaviour) {
     DECLARE_INSTANCE_FIELD(uint64_t, shownRevision);
     DECLARE_INSTANCE_FIELD(float, nextRefresh);
     DECLARE_INSTANCE_FIELD(bool, searchOpen);
+    DECLARE_INSTANCE_FIELD(bool, initialized);
     DECLARE_CTOR(ctor);
     DECLARE_INSTANCE_METHOD(void, Update);
     DECLARE_INSTANCE_METHOD(void, OnDisable);

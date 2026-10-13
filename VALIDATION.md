@@ -1,6 +1,24 @@
-# Validation — 0.4.0 — 2026-10-13
+# Validation — 0.4.1 — 2026-10-13
 
 Target: Beat Saber Quest 1.40.8_7379 / Scotland2 / ARM64.
+
+## Theater menu crash fix
+
+The installed 0.4.0 library matched SHA-256 `8D3A52C8528C908724ABF9DD8F45F8DC65DF97A4CB83F601164030D6B6DADD4E`. Quest logcat recorded an uncaught `RawImage::set_texture` NullException while opening Theater on 2026-10-13 at 23:02:21 Moscow time. The native backtrace entered `BSML::Lite::CreateRawImage`, then `CreateVideoMenu` at source line 151 and the Theater gameplay-tab callback. Symbolication used the matching debug library.
+
+BSML 0.4.55's Lite RawImage factory uses ImageTag, which creates HMUI::ImageView, then asks it for a RawImage component and dereferences the missing component. Theater 0.4.1 creates its thumbnail GameObject and RawImage directly, using the same UI material. Its MonoBehaviour constructor now follows the existing custom-types initialization pattern. Updates begin only after construction finishes; thumbnail cleanup checks Unity destroyed-object semantics.
+
+The native build and package checks pass. A temporary device probe created the full VideoMenuView on Quest 3 inside Beat Saber 1.40.8_7379, verified four live RawImage components, and ran three activation/deactivation cycles with details/search updates. Logcat recorded `MENU_SMOKE_PASS` at 23:13:15 Moscow time; the process remained alive. The probe was removed before building the delivered package. This verifies construction and programmatic lifecycle, not visual layout, controller input, or a user opening the Settings and gameplay tabs. The original user interaction still requires confirmation when the user can operate the headset. Final artifact hashes are recorded below.
+
+### Final 0.4.1 artifacts and installation
+
+- `libbstheater.so`: `8BEB413EC24CCABDAAAF87CD0B010FB15E0C72373481532CA967A44091436FC3`
+- `libbstheaterjs.so`: `2023556C742474431554A08E0C2961B07205D2F41A478A74561F1E9FE19FE228`
+- `BeatSaberTheaterQuest-0.4.1.qmod`: `66D2D551E4BFCF4D394EADC5A2C3E18EF3A137A79C8519660E831D21471BEC0F`
+
+Both final libraries were copied to Quest 3 after removing the temporary probe; installed hashes matched and the game was restarted. Package verification rejects binaries containing the temporary probe marker. The original installed 0.4.0 libraries are preserved in `backups/20261013-230734927/`.
+
+## Previous 0.4.0 feature validation
 
 This is an experimental feature build. The user requested a prepared package because the Quest is unavailable. `adb devices -l` returned no devices; no installation or headset behavior is claimed.
 
@@ -30,7 +48,7 @@ Color correction/vignette require OpenGLES3. Unsupported backends or failed GPU 
 
 Older cached silent videos require manual deletion/redownload for split-audio preview. Search and downloads may still be rejected by YouTube for an expired session or restricted video. Installed/owned DLC is required for its map audio. No startup-crash fix or headset performance result is claimed in this build.
 
-## Packaged artifact hashes
+## Previous 0.4.0 packaged artifact hashes
 
 QMOD verification passed on the final build:
 

@@ -1,6 +1,8 @@
-# Quest checks for 0.4.0
+# Quest checks for 0.4.1
 
 Target Beat Saber 1.40.8_7379. Keep the previous QMOD before installing this experimental build.
+
+For the 0.4.1 crash regression, open and close Settings → Mod Settings → Theater three times, then repeat with Solo → Mods → Theater. Check both the details and Search panels, including a real result thumbnail. Programmatic construction/activation passed on Quest; controller-driven navigation still needs confirmation.
 
 1. Start the game and enter Solo. Confirm no videos download automatically. Select a configured map: Download Video must be disabled when its MP4 exists. Delete the video and confirm Download unlocks; download it and confirm it locks again.
 2. Open Mods → Theater → Search. Search for the selected song, check thumbnails and both result pages, select a result, and download it. Leave and return to the song; verify the chosen title and URL persist. Try a YouTube URL in the search field as well. Use the browser session export if the server requests login.

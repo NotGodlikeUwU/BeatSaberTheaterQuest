@@ -3,6 +3,7 @@
 #include "preview.hpp"
 #include "main.hpp"
 #include "bsml/shared/BSML.hpp"
+#include "bsml/shared/Helpers/getters.hpp"
 #include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/UI/LayoutElement.hpp"
 #include "UnityEngine/UI/HorizontalLayoutGroup.hpp"
@@ -26,7 +27,7 @@ struct Thumbnails {
 };
 std::unordered_map<Theater::VideoMenuView*,Thumbnails> images;
 void ClearImages(Theater::VideoMenuView* view) {
-    if(view->thumbnails)for(auto image:view->thumbnails)if(image)image->set_texture(nullptr);
+    if(view->thumbnails)for(auto image:view->thumbnails)if(image&&Object::op_Implicit_bool(image))image->set_texture(nullptr);
     auto found=images.find(view);if(found==images.end())return;
     for(auto& request:found->second.pending){request.request->Abort();request.request->Dispose();il2cpp_functions::gchandle_free(request.handle);}
     for(auto [texture,handle]:found->second.textures){if(Object::op_Implicit_bool(texture))Object::Destroy(texture);il2cpp_functions::gchandle_free(handle);}
@@ -46,16 +47,28 @@ UI::HorizontalLayoutGroup* Row(Transform* parent) {
     auto row=BSML::Lite::CreateHorizontalLayoutGroup(parent);row->set_spacing(1);
     row->set_childForceExpandWidth(false);row->set_childForceExpandHeight(false);Size(row,78,8);return row;
 }
+UI::RawImage* Thumbnail(Transform* parent) {
+    // BSML 0.4.55 Lite::CreateRawImage uses ImageTag (HMUI::ImageView),
+    // then dereferences its missing RawImage. Build the correct component.
+    auto object=GameObject::New_ctor("TheaterVideoThumbnail");
+    auto image=object->AddComponent<UI::RawImage*>();
+    image->set_material(BSML::Helpers::GetUINoGlowMat());
+    auto rect=image->get_rectTransform();rect->SetParent(parent,false);
+    rect->set_anchoredPosition({0,0});rect->set_sizeDelta({18,10});
+    image->set_raycastTarget(false);Size(image,18,11);
+    return image;
+}
 void Action(Theater::VideoMenuView* view,const std::function<void()>& action) {
     try{view->previewLabel->set_text("");action();view->nextRefresh=0;}
     catch(const std::exception& error){(view->searchOpen?view->searchLabel:view->previewLabel)->set_text(error.what());PaperLogger.error("Video menu: {}",error.what());}
 }
 std::string Duration(int seconds){return std::to_string(seconds/60)+":"+(seconds%60<10?"0":"")+std::to_string(seconds%60);}
 }
-void Theater::VideoMenuView::ctor(){page=0;selectedIndex=-1;shownRevision=std::numeric_limits<uint64_t>::max();nextRefresh=0;searchOpen=false;levelID="";}
+void Theater::VideoMenuView::ctor(){INVOKE_CTOR();UnityEngine::MonoBehaviour::_ctor();page=0;selectedIndex=-1;shownRevision=std::numeric_limits<uint64_t>::max();nextRefresh=0;searchOpen=false;initialized=false;levelID="";}
 void Theater::VideoMenuView::OnDisable(){theater::StopMenuPreview();ClearImages(this);shownRevision=std::numeric_limits<uint64_t>::max();}
 void Theater::VideoMenuView::OnDestroy(){theater::StopMenuPreview();ClearImages(this);}
 void Theater::VideoMenuView::Update() {
+    if(!initialized)return;
     theater::UpdateMenuPreview();
     auto& pending=images[this].pending;
     for(auto it=pending.begin();it!=pending.end();) {
@@ -148,7 +161,7 @@ void CreateVideoMenu(UnityEngine::Transform* parent) {
     view->resultButtons=ArrayW<UI::Button*>(4);view->thumbnails=ArrayW<UI::RawImage*>(4);
     for(int i=0;i<4;i++) {
         auto row=Row(search->get_transform());Size(row,78,12);
-        view->thumbnails[i]=BSML::Lite::CreateRawImage(row,nullptr,{0,0},{18,10});view->thumbnails[i]->set_raycastTarget(false);Size(view->thumbnails[i],18,11);
+        view->thumbnails[i]=Thumbnail(row->get_transform());
         view->resultButtons[i]=BSML::Lite::CreateUIButton(row,"",[view,i] {
             view->selectedIndex=view->page*4+i;auto results=theater::SearchResults();
             if(view->selectedIndex<static_cast<int>(results.results.size()))view->searchLabel->set_text("Selected: "+results.results[view->selectedIndex].title);
@@ -162,4 +175,6 @@ void CreateVideoMenu(UnityEngine::Transform* parent) {
     });});Size(view->resultDownloadButton,40,8);
     auto next=BSML::Lite::CreateUIButton(pages,">",[view]{auto results=theater::SearchResults();if((view->page+1)*4<static_cast<int>(results.results.size()))view->page++;view->shownRevision=std::numeric_limits<uint64_t>::max();view->nextRefresh=0;});Size(next,17,8);
     view->searchRoot->SetActive(false);
+    view->initialized=true;
+    PaperLogger.info("Theater video menu initialized with four RawImage thumbnails");
 }

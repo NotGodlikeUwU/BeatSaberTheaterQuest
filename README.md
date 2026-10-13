@@ -1,10 +1,12 @@
-# BeatSaberTheater Quest 0.4.0
+# BeatSaberTheater Quest 0.4.1
 
 A native ARM64 port for Beat Saber Quest **1.40.8_7379**, built with Scotland2. Based on neboman11/BeatSaberTheater, licensed under GPL-3.0. The original PC source is maintained separately.
 
 ## Use
 
-Install `BeatSaberTheaterQuest-0.4.0.qmod` with a Quest mod manager, then restart the game. This is an experimental feature build: the new menus, audio preview, GPU filters, and environment selection have not yet been tested in a headset. Keep your previous QMOD for rollback.
+Install `BeatSaberTheaterQuest-0.4.1.qmod` with a Quest mod manager, then restart the game. This is an experimental feature build: audio preview, GPU filters, and environment selection still require headset validation. Keep your previous QMOD for rollback.
+
+Version 0.4.1 fixes a crash while constructing Theater's search thumbnails. BSML 0.4.55's Lite RawImage factory creates an ImageView instead; the mod now builds a real RawImage directly. Menu updates begin only after all controls have been initialized.
 
 Select a custom map with `theater-video.json`, `cinema-video.json`, or a Cinema binding from the original PC mod. A **Video available / DOWNLOAD VIDEO** row appears between the difficulty buttons and Play/Practice. Start a download manually with this button. Videos are not downloaded automatically when the game starts, the song list loads, a map is selected, or a song begins.
 
