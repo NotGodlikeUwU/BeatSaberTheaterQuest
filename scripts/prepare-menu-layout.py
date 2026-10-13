@@ -46,6 +46,6 @@ for element in tree.iter():
         element.set("hover-hint", "Preview video and map with stereo audio")
 ET.indent(tree)
 markup = ET.tostring(tree, encoding="unicode")
-(root / "resources/video-menu-quest.bsml").write_text(markup + "\n")
+(root / "resources/video-menu-quest.bsml").write_bytes((markup + "\n").encode("utf-8"))
 icon = (root / "resources/theater-trash.png").read_bytes()
 (root / "include/theater_trash_icon.inc").write_text("static const std::vector<uint8_t> theaterTrashIconBytes = {\n" + ",\n".join(",".join(f"0x{b:02x}" for b in icon[i:i+24]) for i in range(0,len(icon),24)) + "\n};\n")

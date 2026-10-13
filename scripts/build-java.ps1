@@ -14,8 +14,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Java downloader compilation failed' }
 if ($LASTEXITCODE -ne 0) { throw 'Java archive failed' }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $taskConfigZip=[IO.Compression.ZipFile]::OpenRead((Join-Path $taskTools 'desugar-config.jar'))
-try { [IO.Compression.ZipFileExtensions]::ExtractToFile($taskConfigZip.GetEntry('META-INF/desugar/d8/desugar.json'),(Join-Path $taskTools 'desugar.json'),$true) } finally { $taskConfigZip.Dispose() }
-$taskCommon=@('--release','--min-api','32','--lib',$taskAndroid,'--desugared-lib',(Join-Path $taskTools 'desugar.json'))
+$taskDesugarConfig=Join-Path $taskJava 'desugar\desugar.json'
+try { [IO.Compression.ZipFileExtensions]::ExtractToFile($taskConfigZip.GetEntry('META-INF/desugar/d8/desugar.json'),$taskDesugarConfig,$true) } finally { $taskConfigZip.Dispose() }
+$taskCommon=@('--release','--min-api','32','--lib',$taskAndroid,'--desugared-lib',$taskDesugarConfig)
 & java -Xmx2g -cp (Join-Path $taskTools 'r8.jar') com.android.tools.r8.D8 @taskCommon --output (Join-Path $taskJava 'dex') (Join-Path $taskJava 'downloader.jar') @taskJars
 if ($LASTEXITCODE -ne 0) { throw 'D8 compilation failed' }
 & java -Xmx2g -cp (Join-Path $taskTools 'r8.jar') com.android.tools.r8.L8 @taskCommon --output (Join-Path $taskJava 'desugar') (Join-Path $taskTools 'desugar-jdk.jar') (Join-Path $taskTools 'desugar-config.jar')
