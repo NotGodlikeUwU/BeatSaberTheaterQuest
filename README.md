@@ -4,7 +4,7 @@ A native Theater port from PC Beat Saber for Beat Saber Quest **1.40.8_7379**, b
 
 ## Use
 
-Install `BeatSaberTheaterQuest-0.3.7.qmod` with a BMBF/QuestPatcher.
+Install `BeatSaberTheaterQuest-0.1.qmod` with a BMBF/QuestPatcher.
 
 First, you need to log in to YouTube through the Quest Browser. Then launch the game, select a custom map with Cinema support. A **Video available / DOWNLOAD VIDEO** row appears between the difficulty buttons and Play/Practice. Start a download with this button. Also you can download your own videos for any Beatmap using video search. Also you can change play offsets.
 
