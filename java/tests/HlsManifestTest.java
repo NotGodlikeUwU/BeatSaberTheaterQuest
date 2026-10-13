@@ -10,6 +10,11 @@ public final class HlsManifestTest {
         check(formats.size()==2,"Codec/height filtering failed");
         check(formats.get(0).fps==60 && formats.get(0).url.equals("https://example.org/hls/60.m3u8"),"1080p60 preference/relative URL failed");
         check(HlsVideo.renditions("https://example.org/index.m3u8",manifest,720).isEmpty(),"Resolution cap ignored");
+        String audio="#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aac\",URI=\"audio/index.m3u8\"\n";
+        String withAudio=manifest.replace("#EXTM3U\n","#EXTM3U\n"+audio).replace("CODECS=","AUDIO=\"aac\",CODECS=");
+        check(HlsVideo.renditions("https://example.org/index.m3u8",withAudio,1080).get(0).audioUrl.equals("https://example.org/audio/index.m3u8"),"HLS AAC group missing");
+        boolean audioDenied=false;try{HlsVideo.renditions("https://example.org/index.m3u8",withAudio.replace("audio/index.m3u8","http://other.example/audio.m3u8"),1080);}catch(IOException error){audioDenied=true;}
+        check(audioDenied,"Insecure HLS audio accepted");
         String playlist="#EXTM3U\n#EXTINF:3,\na.ts\n#EXTINF:3,\nb.ts\n#EXT-X-ENDLIST\n";
         check(HlsVideo.segments("https://example.org/hls/index.m3u8",playlist).size()==2,"Segments lost");
         boolean denied=false;try{HlsVideo.segments("https://example.org/",playlist.replace("a.ts","http://example.org/a.ts"));}catch(IOException error){denied=true;}

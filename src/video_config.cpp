@@ -1,6 +1,8 @@
 #include "video_config.hpp"
 #include "bundled_configs.hpp"
 #include "beatsaber-hook/shared/rapidjson/include/rapidjson/document.h"
+#include "beatsaber-hook/shared/rapidjson/include/rapidjson/writer.h"
+#include "beatsaber-hook/shared/rapidjson/include/rapidjson/stringbuffer.h"
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -36,7 +38,14 @@ std::filesystem::path Media(const std::filesystem::path& directory, const std::s
     return file;
 }
 }
-std::optional<VideoConfig> LoadVideoConfig(const std::filesystem::path& directory, const std::string& levelID) {
+std::string NormalizeLevelID(std::string id) {
+    std::transform(id.begin(),id.end(),id.begin(),[](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    if (id.starts_with("CUSTOM_LEVEL_") && id.size() > 53) id.resize(53);
+    return id;
+}
+namespace {
+rapidjson::Document ConfigDocument(const std::filesystem::path& directory, const std::string& levelID, std::string_view playlistConfig) {
+    if(std::filesystem::exists(directory/"theater-video.disabled"))return rapidjson::Document{};
     auto path = directory / "theater-video.json";
     if (!std::filesystem::exists(path)) path = directory / "cinema-video.json";
     rapidjson::Document doc;
@@ -46,23 +55,70 @@ std::optional<VideoConfig> LoadVideoConfig(const std::filesystem::path& director
         if (!input) throw std::runtime_error("Cannot read video config");
         std::stringstream text; text << input.rdbuf();
         doc.Parse(text.str().c_str());
+    } else if (!playlistConfig.empty()) {
+        if (playlistConfig.size() > 1024*1024) throw std::runtime_error("Playlist video config exceeds 1 MiB");
+        doc.Parse(playlistConfig.data(),playlistConfig.size());
     } else {
-        if (levelID.empty()) return std::nullopt;
+        if (levelID.empty()) return doc;
         static const rapidjson::Document bundled = [] { rapidjson::Document d; d.Parse(TheaterBundledConfigs); return d; }();
-        auto normalize = [](std::string id) {
-            std::transform(id.begin(),id.end(),id.begin(),[](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-            if (id.starts_with("CUSTOM_LEVEL_") && id.size() > 53) id.resize(53);
-            return id;
-        };
-        const auto normalized = normalize(levelID);
+        const auto normalized = NormalizeLevelID(levelID);
         for (const auto& entry : bundled.GetArray()) {
-            if (normalize(entry["levelID"].GetString()) == normalized) { doc.CopyFrom(entry["config"],doc.GetAllocator()); break; }
+            if (NormalizeLevelID(entry["levelID"].GetString()) == normalized) { doc.CopyFrom(entry["config"],doc.GetAllocator()); break; }
         }
-        if (doc.IsNull()) return std::nullopt;
     }
+    return doc;
+}
+void WriteDocument(const std::filesystem::path& directory, const rapidjson::Document& doc) {
+    std::filesystem::create_directories(directory);
+    auto path=directory/"theater-video.json", partial=directory/"theater-video.json.part";
+    rapidjson::StringBuffer text; rapidjson::Writer<rapidjson::StringBuffer> writer(text);doc.Accept(writer);
+    {std::ofstream output(partial,std::ios::binary|std::ios::trunc);output.write(text.GetString(),text.GetSize());output.flush();if(!output)throw std::runtime_error("Cannot save video configuration");}
+    std::error_code error;std::filesystem::rename(partial,path,error);
+#ifdef _WIN32
+    if(error){std::filesystem::remove(path);std::filesystem::rename(partial,path);}
+#else
+    if(error)throw std::runtime_error("Cannot publish video configuration: "+error.message());
+#endif
+}
+void StringMember(rapidjson::Document& doc,const char* name,const std::string& value) {
+    doc.RemoveMember(name);auto& a=doc.GetAllocator();doc.AddMember(rapidjson::Value(name,a),rapidjson::Value(value.c_str(),a),a);
+}
+}
+std::optional<VideoConfig> LoadVideoConfig(const std::filesystem::path& directory, const std::string& levelID, std::string_view playlistConfig) {
+    auto doc=ConfigDocument(directory,levelID,playlistConfig);
+    if(doc.HasParseError())throw std::runtime_error("Invalid video JSON");
+    if(doc.IsNull())return std::nullopt;
     if (doc.HasParseError() || !doc.IsObject()) throw std::runtime_error("Invalid video JSON");
     VideoConfig config;
     if (doc.HasMember("title") && doc["title"].IsString()) config.title = doc["title"].GetString();
+    if (doc.HasMember("author") && doc["author"].IsString()) config.author = doc["author"].GetString();
+    config.duration=static_cast<int>(std::clamp(Number(doc,"duration",0),0.0,86400.0));
+    if(doc.HasMember("environmentName") && !doc["environmentName"].IsNull()) {
+        if(!doc["environmentName"].IsString() || doc["environmentName"].GetStringLength()>128)throw std::runtime_error("Invalid environmentName");
+        config.environmentName=doc["environmentName"].GetString();
+    }
+    for(auto key:{"transparency","colorBlending"})if(doc.HasMember(key)&&!doc[key].IsNull())
+        (std::string(key)=="transparency"?config.transparency:config.colorBlending)=Boolean(doc,key,false);
+    if(doc.HasMember("colorCorrection")&&!doc["colorCorrection"].IsNull()) {
+        const auto& c=doc["colorCorrection"];if(!c.IsObject())throw std::runtime_error("Invalid colorCorrection");
+        config.hasColorCorrection=true;
+        config.color.brightness=std::clamp(static_cast<float>(Number(c,"brightness",1)),0.f,2.f);
+        config.color.contrast=std::clamp(static_cast<float>(Number(c,"contrast",1)),0.f,5.f);
+        config.color.saturation=std::clamp(static_cast<float>(Number(c,"saturation",1)),0.f,5.f);
+        config.color.hue=std::clamp(static_cast<float>(Number(c,"hue",0)),-360.f,360.f);
+        config.color.exposure=std::clamp(static_cast<float>(Number(c,"exposure",1)),0.f,5.f);
+        config.color.gamma=std::clamp(static_cast<float>(Number(c,"gamma",1)),0.f,5.f);
+    }
+    if(doc.HasMember("vignette")&&!doc["vignette"].IsNull()) {
+        const auto& v=doc["vignette"];if(!v.IsObject())throw std::runtime_error("Invalid vignette");
+        config.hasVignette=true;
+        config.vignette.radius=std::clamp(static_cast<float>(Number(v,"radius",1)),0.f,1.f);
+        config.vignette.softness=std::clamp(static_cast<float>(Number(v,"softness",.005)),0.f,1.f);
+        if(v.HasMember("type")&&!v["type"].IsNull()) {
+            if(!v["type"].IsString())throw std::runtime_error("Invalid vignette type");
+            std::string type=v["type"].GetString();config.vignette.elliptical=type=="oval"||type=="elliptical"||type=="ellipse";
+        }
+    }
     if (doc.HasMember("videoUrl") && doc["videoUrl"].IsString() && doc["videoUrl"].GetStringLength()) {
         config.sourceUrl = doc["videoUrl"].GetString();
         if (!config.sourceUrl.starts_with("https://") || config.sourceUrl.size() > 8192) throw std::runtime_error("videoUrl must use HTTPS");
@@ -115,7 +171,6 @@ std::optional<VideoConfig> LoadVideoConfig(const std::filesystem::path& director
             config.screens.push_back(screen);
         }
     }
-    for (const auto* key : {"colorCorrection", "vignette", "transparency", "colorBlending", "environmentName"}) if (doc.HasMember(key) && !doc[key].IsNull()) config.unsupported.emplace_back(key);
     if (doc.HasMember("videoFile") && doc["videoFile"].IsString()) config.file = Media(directory,doc["videoFile"].GetString());
     // Reuse only the basename of absolute PC download paths.
     if ((config.file.empty() || !std::filesystem::is_regular_file(config.file)) && doc.HasMember("downloadedFormats") && doc["downloadedFormats"].IsObject()) {
@@ -137,6 +192,51 @@ std::optional<VideoConfig> LoadVideoConfig(const std::filesystem::path& director
     if ((config.file.empty() || !std::filesystem::is_regular_file(config.file)) && config.sourceUrl.empty()) throw std::runtime_error("Video config has neither local media nor a download source");
     if (config.file.extension() != ".mp4") throw std::runtime_error("Quest port currently requires MP4");
     return config;
+}
+void SaveVideoSource(const std::filesystem::path& directory,const std::string& source,const std::string& title,const std::string& author,int duration) {
+    if(!source.starts_with("https://")||source.size()>8192)throw std::runtime_error("Video source must use HTTPS");
+    rapidjson::Document doc;doc.SetObject();
+    doc.RemoveMember("videoID");doc.RemoveMember("videoFile");doc.RemoveMember("downloadedFormats");
+    StringMember(doc,"videoUrl",source);StringMember(doc,"title",title);StringMember(doc,"author",author);
+    doc.RemoveMember("duration");doc.AddMember("duration",std::clamp(duration,0,86400),doc.GetAllocator());
+    WriteDocument(directory,doc);
+    std::filesystem::remove(directory/"theater-video.disabled");
+}
+void SaveVideoOffset(const std::filesystem::path& directory,const std::string& levelID,int milliseconds,std::string_view playlistConfig) {
+    auto doc=ConfigDocument(directory,levelID,playlistConfig);
+    if(!doc.IsObject()||doc.HasParseError())throw std::runtime_error("No video configuration selected");
+    if(std::abs(static_cast<int64_t>(milliseconds))>86400000)throw std::runtime_error("Offset exceeds one day");
+    auto& a=doc.GetAllocator();
+    if(!doc.HasMember("userSettings")||!doc["userSettings"].IsObject()){doc.RemoveMember("userSettings");doc.AddMember("userSettings",rapidjson::Value(rapidjson::kObjectType),a);}
+    auto& settings=doc["userSettings"];
+    if(!settings.HasMember("originalOffset"))settings.AddMember("originalOffset",Number(doc,"offset",0),a);
+    settings.RemoveMember("customOffset");settings.AddMember("customOffset",true,a);
+    doc.RemoveMember("offset");doc.AddMember("offset",milliseconds,a);WriteDocument(directory,doc);
+}
+std::string ReadPlaylistVideoConfig(const std::filesystem::path& playlist,const std::string& levelID) {
+    if(!std::filesystem::is_regular_file(playlist))return {};
+    if(std::filesystem::file_size(playlist)>16*1024*1024)throw std::runtime_error("Playlist exceeds 16 MiB");
+    std::ifstream input(playlist);std::stringstream text;text<<input.rdbuf();
+    rapidjson::Document doc;doc.Parse(text.str().c_str());
+    if(doc.HasParseError()||!doc.IsObject()||!doc.HasMember("songs")||!doc["songs"].IsArray())throw std::runtime_error("Invalid playlist JSON");
+    auto id=NormalizeLevelID(levelID);
+    for(const auto& song:doc["songs"].GetArray()) {
+        if(!song.IsObject())continue;
+        bool matches=false;
+        for(auto key:{"levelid","levelID","hash"})if(song.HasMember(key)&&song[key].IsString()) {
+            std::string value=song[key].GetString();if(std::string(key)=="hash")value="custom_level_"+value;
+            if(!value.empty()&&NormalizeLevelID(value)==id)matches=true;
+        }
+        if(!matches)continue;
+        const rapidjson::Value* data=&song;
+        if(song.HasMember("customData")&&song["customData"].IsObject())data=&song["customData"];
+        for(auto key:{"theater","cinema"})if(data->HasMember(key)&&(*data)[key].IsObject()) {
+            rapidjson::StringBuffer result;rapidjson::Writer<rapidjson::StringBuffer> writer(result);(*data)[key].Accept(writer);
+            if(result.GetSize()>1024*1024)throw std::runtime_error("Playlist video config exceeds 1 MiB");
+            return result.GetString();
+        }
+    }
+    return {};
 }
 bool VideoAvailable(const VideoConfig& config) {
     std::error_code error;

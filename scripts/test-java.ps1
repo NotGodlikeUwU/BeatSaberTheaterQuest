@@ -15,3 +15,5 @@ if ($LASTEXITCODE -ne 0) { throw 'Java download tests failed' }
 if ($LASTEXITCODE -ne 0) { throw 'YouTube session tests failed' }
 & java -cp ((@($taskClasses,$taskAndroid)+$taskJars) -join ';') org.bstheater.quest.HlsManifestTest
 if ($LASTEXITCODE -ne 0) { throw 'HLS manifest tests failed' }
+& java -cp ((@($taskClasses)+$taskJars) -join ';') org.bstheater.quest.VideoSearchTest
+if ($LASTEXITCODE -ne 0) { throw 'YouTube search validation failed' }

@@ -1,4 +1,4 @@
-# Third-party notices — BeatSaberTheaterQuest 0.2.2
+# Third-party notices — BeatSaberTheaterQuest
 
 The native port and bundled map bindings derive from neboman11/BeatSaberTheater,
 licensed under GNU GPL version 3. See LICENSE and the original source directory.

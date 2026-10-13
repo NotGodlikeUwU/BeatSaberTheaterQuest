@@ -9,4 +9,6 @@ DECLARE_CONFIG(ModConfig) {
     CONFIG_VALUE(HDDownloadsVersion, int, "HD download defaults version", 0);
     CONFIG_VALUE(DownloadTimeout, int, "Download timeout (seconds)", 900);
     CONFIG_VALUE(MaxVideoMiB, int, "Maximum video size (MiB)", 512);
+    CONFIG_VALUE(ColorBlendingEnabled, bool, "Color blending", true);
+    CONFIG_VALUE(TransparencyEnabled, bool, "Transparent screen body", true);
 };

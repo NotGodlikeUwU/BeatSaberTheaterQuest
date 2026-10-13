@@ -83,6 +83,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/downloa
 # for inline hook
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE -llog)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE bstheaterjs)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE GLESv3 EGL)
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${INCLUDE_DIR})
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${SHARED_DIR})

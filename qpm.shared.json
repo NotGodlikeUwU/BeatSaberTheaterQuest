@@ -7,7 +7,7 @@
     "info": {
       "name": "BeatSaberTheaterQuest",
       "id": "bstheater",
-      "version": "0.3.7",
+      "version": "0.4.0",
       "url": null,
       "additionalData": {
         "overrideSoName": "libbstheater.so",
@@ -58,7 +58,7 @@
         "./third_party/Rhino-MPL-2.0.txt",
         "./third_party/songcore-icon-MIT.txt"
       ],
-      "qmodOutput": "./BeatSaberTheaterQuest-0.3.7.qmod"
+      "qmodOutput": "./BeatSaberTheaterQuest-0.4.0.qmod"
     },
     "dependencies": [
       {

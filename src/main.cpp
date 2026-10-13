@@ -3,6 +3,12 @@
 #include "video_config.hpp"
 #include "downloads.hpp"
 #include "screen_effects.hpp"
+#include "preview.hpp"
+#include "video_processing.hpp"
+#include "GlobalNamespace/StandardLevelScenesTransitionSetupDataSO.hpp"
+#include "GlobalNamespace/OverrideEnvironmentSettings.hpp"
+#include "GlobalNamespace/EnvironmentsListModel.hpp"
+#include "GlobalNamespace/EnvironmentInfoSO.hpp"
 #include "UnityEngine/LayerMask.hpp"
 #include "GlobalNamespace/GameplayCoreInstaller.hpp"
 #include "GlobalNamespace/GameplayCoreSceneSetupData.hpp"
@@ -16,6 +22,7 @@
 #include "UnityEngine/Material.hpp"
 #include "UnityEngine/Shader.hpp"
 #include "UnityEngine/Texture.hpp"
+#include "UnityEngine/Rendering/ShadowCastingMode.hpp"
 #include "UnityEngine/Vector2.hpp"
 #include "UnityEngine/Vector3.hpp"
 #include "UnityEngine/Quaternion.hpp"
@@ -41,6 +48,8 @@ GameObject* root{};
 Video::VideoPlayer* player{};
 Material* material{};
 Mesh* mesh{};
+std::unique_ptr<theater::VideoImageProcessor> imageProcessor;
+Texture* displayTexture{};
 AudioTimeSyncController* owner{};
 bool paused{}, started{}, seekPending{};
 float prepareStarted{}, lastSeek{};
@@ -49,7 +58,8 @@ std::vector<GameObject*> screens;
 void Cleanup() {
     theater::StopScreenEffects();
     if (player && Object::op_Implicit_bool(player)) player->Stop();
-    if (root && Object::op_Implicit_bool(root)) Object::Destroy(root);
+    if (root && Object::op_Implicit_bool(root)) {root->SetActive(false);Object::Destroy(root);}
+    imageProcessor.reset();displayTexture=nullptr;
     if (material && Object::op_Implicit_bool(material)) Object::Destroy(material);
     if (mesh && Object::op_Implicit_bool(mesh)) Object::Destroy(mesh);
     root = nullptr; player = nullptr; material = nullptr; mesh = nullptr;
@@ -57,11 +67,11 @@ void Cleanup() {
 }
 void Visibility(bool visible) {
     for (auto screen : screens) screen->SetActive(visible);
-    theater::UpdateScreenLight(player ? player->get_texture() : nullptr,visible);
+    theater::UpdateScreenLight(player?player->get_texture().ptr():nullptr,visible);
 }
 void PausedScreenEffects() {
     bool visible=!screens.empty() && screens.front()->get_activeSelf();
-    theater::UpdateScreenLight(player ? player->get_texture() : nullptr,visible);
+    theater::UpdateScreenLight(player?player->get_texture().ptr():nullptr,visible);
 }
 Mesh* BuildMesh(float aspect) {
     auto& c = *selected;
@@ -90,13 +100,13 @@ Mesh* BuildMesh(float aspect) {
     }
     auto result = Mesh::New_ctor();
     result->set_vertices(vertices); result->set_uv(uv); result->set_triangles(triangles);
+    ArrayW<Color> colors(vertices.size());for(auto& color:colors)color={1,1,1,1};result->set_colors(colors);
     result->RecalculateBounds(); result->RecalculateNormals();
     return result;
 }
 void CreateScreens() {
-    auto shader = Shader::Find("Unlit/Texture");
-    if (!shader) throw std::runtime_error("Unlit/Texture shader unavailable in Quest player");
-    material = Material::New_ctor(shader);
+    material = theater::CreateVideoMaterial(*selected);
+    imageProcessor=std::make_unique<theater::VideoImageProcessor>(*selected);
     material->set_mainTexture(player->get_texture());
     float aspect = player->get_height() ? static_cast<float>(player->get_width()) / player->get_height() : 16.f/9.f;
     mesh = BuildMesh(aspect);
@@ -110,7 +120,9 @@ void CreateScreens() {
         object->get_transform()->set_rotation(Quaternion::Euler(s.rotation.x,s.rotation.y,s.rotation.z));
         object->get_transform()->set_localScale(Vector3(s.scale.x,s.scale.y,s.scale.z));
         object->AddComponent<MeshFilter*>()->set_sharedMesh(mesh);
-        object->AddComponent<MeshRenderer*>()->set_sharedMaterial(material);
+        auto renderer=object->AddComponent<MeshRenderer*>();renderer->set_sharedMaterial(material);
+        renderer->set_shadowCastingMode(Rendering::ShadowCastingMode::Off);renderer->set_receiveShadows(false);
+        imageProcessor->AttachScreenBody(object,mesh);
         object->SetActive(false); screens.push_back(object);
     }
     theater::StartScreenEffects(*selected,screens,mesh,material,aspect);
@@ -171,23 +183,42 @@ void Tick(AudioTimeSyncController* clock) {
     if (seekPending && (std::abs(player->get_time() - target) < tolerance || now - lastSeek > 2.f)) seekPending = false;
     if (!player->get_isPlaying()) player->Play();
     // Avoid exposing the initial decoder frame before the first seek catches up.
-    Visibility(!seekPending && player->get_texture() != nullptr);
-    material->set_mainTexture(player->get_texture());
+    displayTexture=imageProcessor->Update(player->get_texture().ptr());
+    material->set_mainTexture(displayTexture);
+    Visibility(!seekPending && displayTexture != nullptr);
 }
 }
 MAKE_HOOK_MATCH(TheaterInstall, &GlobalNamespace::GameplayCoreInstaller::InstallBindings, void, GlobalNamespace::GameplayCoreInstaller* self) {
+    theater::StopMenuPreview();
     Cleanup(); selected.reset();
     TheaterInstall(self);
     try {
         auto data = self->_sceneSetupData;
         if (!data || !data->beatmapLevel) return;
-        auto level = SongCore::API::Loading::GetLevelByLevelID(static_cast<std::string>(data->beatmapLevel->levelID));
-        if (!level) return;
         auto levelID = static_cast<std::string>(data->beatmapLevel->levelID);
-        selected = theater::LoadVideoConfig(std::filesystem::path(level->customLevelPath),levelID);
-        if (selected && !theater::VideoAvailable(*selected)) theater::QueueMap(std::filesystem::path(level->customLevelPath),levelID);
+        if(!theater::PlaybackAllowed(data->beatmapKey))return;
+        selected = theater::LoadLevelVideo(levelID);
         if (selected) for (auto& key : selected->unsupported) PaperLogger.warn("PC feature currently unsupported: {}",key);
     } catch (const std::exception& error) { PaperLogger.error("Config rejected: {}",error.what()); selected.reset(); }
+}
+MAKE_HOOK_MATCH(TheaterEnvironment, &GlobalNamespace::StandardLevelScenesTransitionSetupDataSO::InitEnvironmentInfo, void,
+    GlobalNamespace::StandardLevelScenesTransitionSetupDataSO* self,GlobalNamespace::OverrideEnvironmentSettings* settings,GlobalNamespace::EnvironmentsListModel* environments) {
+    TheaterEnvironment(self,settings,environments);
+    try {
+        if(!getModConfig().Enabled.GetValue()||!self->get_beatmapLevel()||!environments||!theater::PlaybackAllowed(self->get_beatmapKey()))return;
+        auto config=theater::LoadLevelVideo(static_cast<std::string>(self->get_beatmapLevel()->levelID));
+        if(!config||config->environmentName.empty()||!theater::VideoAvailable(*config))return;
+        auto requested=environments->GetEnvironmentInfoBySerializedNameSafe(config->environmentName);
+        auto original=self->get_targetEnvironmentInfo();
+        if(!requested||static_cast<std::string>(requested->get_serializedName())!=config->environmentName) {
+            PaperLogger.warn("Unknown Theater environment: {}",config->environmentName);return;
+        }
+        if(original&&original->get_environmentType()!=requested->get_environmentType()) {
+            PaperLogger.warn("Theater environment type does not match selected characteristic: {}",config->environmentName);return;
+        }
+        self->set_targetEnvironmentInfo(requested.ptr());
+        PaperLogger.info("Theater selected environment: {}",config->environmentName);
+    }catch(const std::exception& error){PaperLogger.error("Environment override rejected: {}",error.what());}
 }
 MAKE_HOOK_MATCH(TheaterStart, &AudioTimeSyncController::Start, void, AudioTimeSyncController* self) {
     TheaterStart(self);
@@ -209,6 +240,7 @@ MAKE_HOOK_MATCH(TheaterDestroy, &AudioTimeSyncController::OnDestroy, void, Audio
 }
 MAKE_HOOK_MATCH(TheaterVideoError, &Video::VideoPlayer::InvokeErrorReceivedCallback_Internal, void, Video::VideoPlayer* source, StringW error) {
     TheaterVideoError(source,error);
+    theater::MenuPreviewError(source,static_cast<std::string>(error));
     if (source == player) { PaperLogger.error("Unity video decoder: {}",static_cast<std::string>(error)); Cleanup(); }
 }
 MAKE_HOOK_MATCH(TheaterSeekComplete, &Video::VideoPlayer::InvokeSeekCompletedCallback_Internal, void, Video::VideoPlayer* source) {
@@ -229,11 +261,14 @@ extern "C" __attribute__((visibility("default"))) void late_load() noexcept {
         getModConfig().HDDownloadsVersion.SetValue(1);
     }
     SongCore::API::Capabilities::RegisterCapability("Cinema");
+    SongCore::API::Capabilities::RegisterCapability("Theater");
+    SongCore::API::Capabilities::RegisterCapability("BeatSaberTheater");
     PaperLogger.info("Registered Cinema capability with SongCore");
     try { theater::InitDownloads(); }
     catch (const std::exception& error) { PaperLogger.error("Download initialization failed: {}",error.what()); }
     RegisterTheaterSettings();
     INSTALL_HOOK(PaperLogger,TheaterInstall);
+    INSTALL_HOOK(PaperLogger,TheaterEnvironment);
     INSTALL_HOOK(PaperLogger,TheaterStart);
     INSTALL_HOOK(PaperLogger,TheaterUpdate);
     INSTALL_HOOK(PaperLogger,TheaterPause);
