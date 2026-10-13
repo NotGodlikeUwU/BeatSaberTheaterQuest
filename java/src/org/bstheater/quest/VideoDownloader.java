@@ -9,6 +9,11 @@ import org.schabi.newpipe.extractor.NewPipe;
 import org.schabi.newpipe.extractor.MediaFormat;
 import org.schabi.newpipe.extractor.downloader.*;
 import org.schabi.newpipe.extractor.stream.*;
+import org.schabi.newpipe.extractor.InfoItem;
+import org.schabi.newpipe.extractor.search.SearchExtractor;
+import com.grack.nanojson.JsonArray;
+import com.grack.nanojson.JsonObject;
+import com.grack.nanojson.JsonWriter;
 
 /** Runs on the native download worker. No Unity or UI calls are made here. */
 public final class VideoDownloader {
@@ -25,7 +30,10 @@ public final class VideoDownloader {
     public static volatile boolean loginRequired;
     public static volatile int resolvedHeight, resolvedFps;
     public static volatile boolean resolvedHls;
+    static String resolvedAudioUrl;
+    static boolean resolvedAudioHls;
     private static final String USER_AGENT = "Mozilla/5.0 (Android 12; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0";
+    private static final String EXTRACTOR_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
     private VideoDownloader() { }
     public static void setCookieFile(String path) { cookieFile = path; }
@@ -115,7 +123,12 @@ public final class VideoDownloader {
     }
     private static final class ExtractorDownloader extends Downloader {
         @Override public Response execute(Request request) throws IOException {
-            HttpURLConnection conn = open(request.url(),request.httpMethod(),request.headers(),request.dataToSend());
+            Map<String,List<String>> headers=new LinkedHashMap<>(request.headers());
+            // NewPipe's WEB bootstrap/search parser requires desktop HTML. A
+            // mobile default redirects the empty results page to m.youtube.com.
+            if(headers.keySet().stream().noneMatch(key->key.equalsIgnoreCase("User-Agent")))
+                headers.put("User-Agent",Collections.singletonList(EXTRACTOR_USER_AGENT));
+            HttpURLConnection conn = open(request.url(),request.httpMethod(),headers,request.dataToSend());
             try {
                 ByteArrayOutputStream body = new ByteArrayOutputStream();
                 try (InputStream in = responseStream(conn)) {
@@ -132,6 +145,34 @@ public final class VideoDownloader {
     }
     private static void initialize() {
         if (!initialized) { NewPipe.init(new ExtractorDownloader()); initialized = true; }
+    }
+    public static String search(String query) throws IOException {
+        if(query==null || query.trim().isEmpty() || query.length()>512)throw new IOException("Enter a YouTube search query");
+        prepare();initialize();loadSession();
+        deadline=System.nanoTime()+60_000_000_000L;
+        JsonArray results=new JsonArray();
+        try {
+            if(query.startsWith("https://")) {
+                if(!isYoutube(query))throw new IOException("Search accepts YouTube URLs only");
+                StreamExtractor extractor=NewPipe.getServiceByUrl(query).getStreamExtractor(query);extractor.fetchPage();
+                JsonObject item=new JsonObject();item.put("url",extractor.getUrl());item.put("title",extractor.getName());
+                item.put("author",extractor.getUploaderName());item.put("duration",(int)Math.max(0,Math.min(86400,extractor.getLength())));
+                item.put("thumbnail",extractor.getThumbnails().isEmpty()?"":extractor.getThumbnails().get(0).getUrl());results.add(item);
+            } else {
+                SearchExtractor extractor=NewPipe.getService(0).getSearchExtractor(query.trim());extractor.fetchPage();
+                for(InfoItem value:extractor.getInitialPage().getItems()) {
+                    checkCancelled();if(!(value instanceof StreamInfoItem))continue;
+                    StreamInfoItem video=(StreamInfoItem)value;JsonObject item=new JsonObject();
+                    item.put("url",video.getUrl());item.put("title",video.getName());item.put("author",video.getUploaderName());
+                    item.put("duration",(int)Math.max(0,Math.min(86400,video.getDuration())));
+                    item.put("thumbnail",video.getThumbnails().isEmpty()?"":video.getThumbnails().get(0).getUrl());results.add(item);
+                    if(results.size()==20)break;
+                }
+            }
+            return JsonWriter.string(results);
+        }catch(IOException error){throw error;}
+        catch(Exception error){throw new IOException("YouTube search failed: "+error.getMessage(),error);}
+        finally{deadline=0;}
     }
     static int height(VideoStream stream) {
         if (stream.getHeight() > 0) return stream.getHeight();
@@ -155,7 +196,7 @@ public final class VideoDownloader {
         return best;
     }
     public static String resolve(String source, int maxHeight) throws IOException {
-        resolvedHls=false;resolvedHeight=resolvedFps=0;
+        resolvedHls=false;resolvedHeight=resolvedFps=0;resolvedAudioUrl=null;resolvedAudioHls=false;
         checkedUrl(source);
         if (!isYoutube(source)) return source;
         initialize();
@@ -180,6 +221,11 @@ public final class VideoDownloader {
             streams.addAll(extractor.getVideoStreams());
             VideoStream best=choose(streams,maxHeight);
             resolvedHeight=height(best);resolvedFps=best.getFps();
+            AudioStream audio=null;
+            for(AudioStream candidate:extractor.getAudioStreams())
+                if(candidate.isUrl()&&candidate.getDeliveryMethod()==DeliveryMethod.PROGRESSIVE_HTTP&&candidate.getFormat()==MediaFormat.M4A
+                    &&(audio==null||candidate.getAverageBitrate()>audio.getAverageBitrate()))audio=candidate;
+            if(audio!=null)resolvedAudioUrl=audio.getContent();
             return best.getContent();
         } catch (IOException error) { throw error; }
         catch (org.schabi.newpipe.extractor.exceptions.SignInConfirmNotBotException error) {
@@ -231,6 +277,7 @@ public final class VideoDownloader {
         deadline = System.nanoTime() + timeoutSeconds * 1_000_000_000L;
         File destination = new File(outputPath).getCanonicalFile();
         File partial = new File(outputPath + ".part").getCanonicalFile();
+        File audioPartial=new File(outputPath+".audio.part"),combined=new File(outputPath+".av.part");
         if (!partial.getParentFile().equals(destination.getParentFile())) throw new IOException("Unsafe partial file path");
         boolean youtube=isYoutube(source);
         if (destination.exists()) {
@@ -271,6 +318,19 @@ public final class VideoDownloader {
             } finally { conn.disconnect(); }
             }
             validateMp4(partial);
+            if(youtube&&resolvedAudioUrl!=null) {
+                try {
+                    if(!Mp4Audio.hasAudio(partial)) {
+                    phase="Downloading preview audio";
+                    if(resolvedAudioHls)HlsVideo.download(resolvedAudioUrl,audioPartial,limitBytes);
+                    else try(FileOutputStream audio=new FileOutputStream(audioPartial)){copyMedia(resolvedAudioUrl,audio,limitBytes);audio.getFD().sync();}
+                    phase="Saving video and preview audio";Mp4Audio.mux(partial,audioPartial,combined,limitBytes);validateMp4(combined);
+                    java.nio.file.Files.move(combined.toPath(),partial.toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    }
+                }catch(InterruptedIOException error){throw error;}
+                catch(IOException | RuntimeException error){phase="Video ready; preview audio was unavailable";if(combined.exists())combined.delete();}
+                finally{if(audioPartial.exists())audioPartial.delete();}
+            }
             checkCancelled();
             // Same-folder rename makes completed videos visible atomically to native playback.
             try { java.nio.file.Files.move(partial.toPath(),destination.toPath(),java.nio.file.StandardCopyOption.ATOMIC_MOVE,java.nio.file.StandardCopyOption.REPLACE_EXISTING); }
@@ -281,7 +341,7 @@ public final class VideoDownloader {
             if (partial.exists() && !partial.delete()) partial.deleteOnExit();
             phase = "Failed: " + error.getMessage();
             throw error;
-        } finally { deadline = 0; }
+        } finally { deadline = 0; if(audioPartial.exists())audioPartial.delete();if(combined.exists())combined.delete(); }
     }
     private static void saveQuality(File video,int requested,int height,int fps) throws IOException {
         File file=new File(video+".bstheater-quality"),temporary=new File(file+".part");

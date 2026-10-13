@@ -1,15 +1,16 @@
 """Check the delivered QMOD, embedded runtime assets and pinned source inputs."""
 import hashlib
 import json
+import re
 from pathlib import Path
 from zipfile import ZipFile
 
 root = Path(__file__).resolve().parents[1]
 sha = lambda data: hashlib.sha256(data).hexdigest().upper()
-package = root / "BeatSaberTheaterQuest-0.3.7.qmod"
+package = root / "BeatSaberTheaterQuest-0.1.0.qmod"
 with ZipFile(package) as archive:
     manifest = json.loads(archive.read("mod.json"))
-    assert manifest["version"] == "0.3.7"
+    assert manifest["version"] == "0.1.0"
     assert manifest["packageVersion"] == "1.40.8_7379"
     assert manifest["modloader"] == "Scotland2"
     assert manifest["modFiles"] == ["libbstheater.so"]
@@ -26,6 +27,11 @@ with ZipFile(package) as archive:
     for name in ("quickjs-MIT.txt", "ejs-Unlicense.txt", "ejs-dependencies.txt", "songcore-icon-MIT.txt", "Rhino-MPL-2.0.txt", "LICENSE"):
         assert len(archive.read(name)) > 500
 mod = (root / "build/libbstheater.so").read_bytes()
+assert b"MENU_SMOKE_" not in mod, "Temporary device probe must not be shipped"
+assert b"LAYOUT_PROBE" not in mod, "Temporary layout probe must not be shipped"
+assert (root / "resources/video-menu-quest.bsml").read_bytes().rstrip() in mod, "The delivered menu must use the checked PC layout"
+for shader in re.findall(r'R"GLSL\((.*?)\)GLSL"', (root / "include/video_filter_glsl.hpp").read_text(), re.S):
+    assert shader.encode() in mod, "The shipped GPU filter is not the tested shader"
 for name in ("bstheater-download.dex", "bstheater-desugar.dex"):
     assert (root / "java" / name).read_bytes() in mod
 solver = (root / "build/libbstheaterjs.so").read_bytes()

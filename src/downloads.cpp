@@ -2,6 +2,12 @@
 #include "main.hpp"
 #include "modconfig.hpp"
 #include "video_config.hpp"
+#include "video_library.hpp"
+#include "preview.hpp"
+#include "GlobalNamespace/BeatmapLevel.hpp"
+#include "GlobalNamespace/BeatmapKey.hpp"
+#include "GlobalNamespace/BeatmapLevelPack.hpp"
+#include "beatsaber-hook/shared/rapidjson/include/rapidjson/document.h"
 #include "beatsaber-hook/shared/config/config-utils.hpp"
 #include "songcore/shared/SongCore.hpp"
 #include <jni.h>
@@ -18,13 +24,14 @@
 #include <chrono>
 #include <unordered_map>
 #include <fstream>
+#include <cmath>
 
 extern "C" const unsigned char bstheater_download_dex_start[], bstheater_download_dex_end[];
 extern "C" const unsigned char bstheater_desugar_dex_start[], bstheater_desugar_dex_end[];
 extern "C" jstring Java_org_bstheater_quest_NativePlayerSolver_evaluate(JNIEnv*,jclass,jstring);
 namespace theater {
 namespace {
-struct Task { std::filesystem::path directory; std::string levelID; bool manual; };
+struct Task { std::filesystem::path directory; std::string levelID; bool manual; std::string playlistConfig; };
 struct Service {
     std::mutex mutex;
     std::condition_variable wake;
@@ -37,6 +44,10 @@ struct Service {
     uint64_t cancelEpoch{};
     std::filesystem::path selectedDir;
     std::string selectedID;
+    std::string selectedQuery, selectedPlaylist;
+    std::optional<GlobalNamespace::BeatmapKey> selectedKey;
+    bool playbackAllowed{true};
+    uint32_t selectedLevelHandle{};
     std::optional<VideoConfig> selectedConfig;
     std::string selectedConfigError;
     unsigned completed{}, failed{};
@@ -44,7 +55,9 @@ struct Service {
     std::atomic<bool> loginBlocked{false};
     std::atomic<int> height{1080}, timeout{300}, maxMiB{512};
     jclass bridge{};
-    jmethodID download{}, cancel{}, prepare{};
+    jmethodID download{}, cancel{}, prepare{}, searchMethod{};
+    std::optional<std::string> searchRequest;
+    VideoSearchState search;
     jfieldID bytes{}, total{}, phase{}, sessionStatus{}, loginRequired{};
 };
 Service& State() { static auto* service = new Service(); return *service; }
@@ -85,23 +98,50 @@ void Worker() {
         auto& state = State();
         Task task;
         uint64_t epoch;
+        std::string searchQuery; uint64_t searchRevision{};
         {
             std::unique_lock guard(state.mutex);
-            state.wake.wait(guard,[&] { return !state.queue.empty(); });
+            state.wake.wait(guard,[&] { return !state.queue.empty() || state.searchRequest.has_value(); });
+            if(state.searchRequest) {
+                searchQuery=std::move(*state.searchRequest);state.searchRequest.reset();searchRevision=state.search.revision;
+            } else {
             task = std::move(state.queue.front()); state.queue.pop_front();
             state.active = task.directory.filename().string();
             state.message = "Checking video config";
             state.downloading = false; epoch = state.cancelEpoch;
+            }
+        }
+        if(!searchQuery.empty()) {
+            std::vector<VideoSearchResult> results;std::string message;
+            bool frame=env->PushLocalFrame(32)==JNI_OK;
+            try {
+                if(!frame)throw std::runtime_error("Cannot allocate search JNI frame");
+                auto query=ToJavaString(env,searchQuery);Check(env);
+                auto value=static_cast<jstring>(env->CallStaticObjectMethod(state.bridge,state.searchMethod,query));Check(env);
+                auto text=JavaString(env,value);rapidjson::Document json;json.Parse(text.c_str());
+                if(json.HasParseError()||!json.IsArray()||json.Size()>20)throw std::runtime_error("Invalid YouTube search response");
+                for(const auto& entry:json.GetArray()) {
+                    if(!entry.IsObject()||!entry.HasMember("url")||!entry["url"].IsString())continue;
+                    VideoSearchResult result;result.url=entry["url"].GetString();
+                    if(!result.url.starts_with("https://"))continue;
+                    for(auto key:{"title","author","thumbnail"})if(entry.HasMember(key)&&entry[key].IsString()) {
+                        auto& target=std::string(key)=="title"?result.title:(std::string(key)=="author"?result.author:result.thumbnail);target=entry[key].GetString();
+                    }
+                    if(entry.HasMember("duration")&&entry["duration"].IsInt())result.duration=entry["duration"].GetInt();
+                    results.push_back(std::move(result));
+                }
+                message=results.empty()?"No videos found. Refine your search.":"Select a video, then press Download";
+            }catch(const std::exception& error){message=std::string("Search failed: ")+error.what();}
+            if(frame)env->PopLocalFrame(nullptr);
+            std::lock_guard guard(state.mutex);
+            if(state.search.revision==searchRevision){state.search.busy=false;state.search.results=std::move(results);state.search.message=message;++state.search.revision;}
+            continue;
         }
         bool failed = false;
         try {
             if (task.manual || state.automatic.load()) {
-                auto config = LoadVideoConfig(task.directory,task.levelID);
-                bool upgrade=false;
-                if(config && VideoAvailable(*config) && !config->sourceUrl.empty()) {
-                    upgrade=task.manual;
-                }
-                if (config && (!VideoAvailable(*config) || upgrade)) {
+                auto config = LoadVideoConfig(task.directory,task.levelID,task.playlistConfig);
+                if (config && !VideoAvailable(*config)) {
                     if (config->sourceUrl.empty()) throw std::runtime_error("No videoID/videoUrl in map config");
                     {
                         std::lock_guard guard(state.mutex);
@@ -155,22 +195,51 @@ void SongsLoaded(std::span<SongCore::SongLoader::CustomBeatmapLevel* const> leve
     }
 }
 void LevelSelected(const SongCore::API::LevelSelect::LevelWasSelectedEventArgs& args) {
-    auto* level = args.isCustom ? SongCore::API::Loading::GetLevelByLevelID(args.levelID) : nullptr;
+    auto* level=args.beatmapLevel;
+    auto directory=VideoDirectory(args.levelID);
+    std::string playlist;
     std::optional<VideoConfig> config;
     std::string configError;
     if (level) {
-        try { config = LoadVideoConfig(std::filesystem::path(level->customLevelPath),args.levelID); }
+        try {
+            bool local=std::filesystem::exists(directory/"theater-video.json")||std::filesystem::exists(directory/"cinema-video.json")||std::filesystem::exists(directory/"theater-video.disabled");
+            if(!local&&args.levelPack)try{playlist=PlaylistBinding(args.levelID,static_cast<std::string>(args.levelPack->packID));}
+            catch(const std::exception& error){PaperLogger.warn("Playlist Cinema binding ignored: {}",error.what());}
+            config = LoadVideoConfig(directory,args.levelID,playlist);
+        }
         catch (const std::exception& error) { configError = error.what(); PaperLogger.error("Selected Cinema config rejected: {}",configError); }
     }
+    bool allowed=true;
+    if(args.customLevelDetails) {
+        auto has=[](const auto& details) {
+            auto match=[](std::string s){std::transform(s.begin(),s.end(),s.begin(),[](unsigned char c){return std::tolower(c);});return s=="cinema"||s=="theater"||s=="beatsabertheater";};
+            return std::any_of(details.suggestions.begin(),details.suggestions.end(),match)||std::any_of(details.requirements.begin(),details.requirements.end(),match);
+        };
+        bool any=false;
+        for(const auto& [name,set]:args.customLevelDetails->levelDetails.characteristicNameToBeatmapDetailsSet)
+            for(const auto& [difficulty,details]:set.difficultyToDifficultyBeatmapDetails)any=any||has(details);
+        allowed=has(args.customLevelDetails->difficultyDetails)||(!any&&!args.isWIP);
+    }
     auto& state = State();
+    bool changed;
+    {std::lock_guard guard(state.mutex);changed=state.selectedID!=args.levelID||state.selectedPlaylist!=playlist;}
+    if(changed)StopMenuPreview();
     {
         std::lock_guard guard(state.mutex);
-        state.selectedDir = level ? std::filesystem::path(level->customLevelPath) : std::filesystem::path{};
+        state.selectedDir = level ? directory : std::filesystem::path{};
         state.selectedID = args.levelID;
+        state.selectedQuery=level?static_cast<std::string>(level->songName)+" "+static_cast<std::string>(level->songAuthorName):"";
+        state.selectedPlaylist=playlist;state.selectedKey=args.beatmapKey;state.playbackAllowed=allowed;
+        if(state.selectedLevelHandle)il2cpp_functions::gchandle_free(state.selectedLevelHandle);
+        state.selectedLevelHandle=level?il2cpp_functions::gchandle_new(reinterpret_cast<Il2CppObject*>(level),false):0;
+        if(changed) {
+            state.searchRequest.reset();state.search.results.clear();state.search.busy=false;++state.search.revision;
+            state.search.message="Search YouTube for the selected song";
+        }
         state.selectedConfig = std::move(config);
         state.selectedConfigError = std::move(configError);
     }
-    if (level) QueueMap(std::filesystem::path(level->customLevelPath),args.levelID);
+    if (level) QueueMap(directory,args.levelID);
 }
 }
 void InitDownloads() {
@@ -203,6 +272,7 @@ void InitDownloads() {
         state.download = env->GetStaticMethodID(state.bridge,"download","(Ljava/lang/String;Ljava/lang/String;IIJ)V"); Check(env);
         state.cancel = env->GetStaticMethodID(state.bridge,"cancel","()V"); Check(env);
         state.prepare = env->GetStaticMethodID(state.bridge,"prepare","()V"); Check(env);
+        state.searchMethod = env->GetStaticMethodID(state.bridge,"search","(Ljava/lang/String;)Ljava/lang/String;"); Check(env);
         state.bytes = env->GetStaticFieldID(state.bridge,"downloadedBytes","J"); Check(env);
         state.total = env->GetStaticFieldID(state.bridge,"totalBytes","J"); Check(env);
         state.phase = env->GetStaticFieldID(state.bridge,"phase","Ljava/lang/String;"); Check(env);
@@ -236,7 +306,7 @@ void QueueMap(const std::filesystem::path& directory, const std::string& id, boo
     auto retry = state.retryAfter.find(directory.string());
     if (!manual && retry != state.retryAfter.end() && retry->second > std::chrono::steady_clock::now()) return;
     if (!state.pending.insert(directory.string()).second) return;
-    Task task{directory,id,manual};
+    Task task{directory,id,manual,directory==state.selectedDir?state.selectedPlaylist:""};
     if (manual) state.queue.push_front(std::move(task)); else state.queue.push_back(std::move(task));
     state.wake.notify_one();
 }
@@ -247,10 +317,11 @@ void RetrySelectedDownload() {
         if ((state.selectedConfig && VideoAvailable(*state.selectedConfig)) || state.pending.contains(state.selectedDir.string())) return;
         directory = state.selectedDir; id = state.selectedID; state.lastError.clear();
     }
-    if (directory.empty()) { std::lock_guard guard(state.mutex); state.message = "Select a custom beatmap first"; return; }
+    if (directory.empty()) { std::lock_guard guard(state.mutex); state.message = "Select a beatmap first"; return; }
     QueueMap(directory,id,true);
 }
 void DeleteSelectedVideo() {
+    StopMenuPreview();
     auto& state=State();std::lock_guard guard(state.mutex);
     if(!state.selectedConfig || state.pending.contains(state.selectedDir.string()))return;
     try {
@@ -265,10 +336,17 @@ void DeleteSelectedVideo() {
 void QueueAllVideos() {
     for (auto* level : SongCore::API::Loading::GetAllLevels())
         if (level) QueueMap(std::filesystem::path(level->customLevelPath),static_cast<std::string>(level->levelID),true);
+    auto official=std::filesystem::path(getDataDir(std::string_view("bstheater")))/"TheaterOSTVideos";
+    std::error_code error;
+    for(const auto& entry:std::filesystem::directory_iterator(official,error)) {
+        if(entry.is_directory(error)&&(std::filesystem::exists(entry.path()/"theater-video.json")||std::filesystem::exists(entry.path()/"cinema-video.json")))
+            QueueMap(entry.path(),entry.path().filename().string(),true);
+    }
 }
 void CancelDownloads() {
     auto& state = State();
-    { std::lock_guard guard(state.mutex); ++state.cancelEpoch; for (const auto& task : state.queue) state.pending.erase(task.directory.string()); state.queue.clear(); state.message = "Download queue cancelled"; }
+    { std::lock_guard guard(state.mutex); ++state.cancelEpoch; for (const auto& task : state.queue) state.pending.erase(task.directory.string()); state.queue.clear(); state.message = "Download queue cancelled";
+        state.searchRequest.reset();state.search.busy=false;state.search.message="Search cancelled";++state.search.revision; }
     if (state.bridge) { auto* env = Environment(); env->CallStaticVoidMethod(state.bridge,state.cancel); Check(env); }
 }
 std::string DownloadStatus() {
@@ -286,7 +364,7 @@ std::string DownloadStatus() {
             text << (VideoAvailable(*state.selectedConfig) ? "Video ready!" : "Video available - Download Video") << '\n';
         } else if (!state.selectedConfigError.empty()) text << "Cinema config error: " << state.selectedConfigError << '\n';
         else text << "No Cinema video configured for this map" << '\n';
-    } else text << "Select a custom beatmap to see its Cinema video" << '\n';
+    } else text << "Select a beatmap to see its Cinema video" << '\n';
     text << "Queued: " << state.queue.size() << " | Downloaded: " << state.completed << " | Failed: " << state.failed << '\n';
     if (state.active.empty()) text << state.message;
     else if (state.bridge && state.downloading) {
@@ -307,6 +385,8 @@ SelectedDownloadState SelectedDownload() {
     result.configured=true;result.ready=VideoAvailable(*state.selectedConfig);
     result.busy=state.pending.contains(state.selectedDir.string());
     result.text=result.ready?"Video ready!":"Video available";
+    auto failedPrefix="Failed: "+state.selectedDir.filename().string()+" - ";
+    if(!result.ready&&!result.busy&&state.lastError.starts_with(failedPrefix))result.text="Failed: "+state.lastError.substr(failedPrefix.size());
     if (result.busy) {
         result.text="Queued";
         if(state.downloading && state.active==state.selectedDir.filename().string() && state.bridge) {
@@ -315,5 +395,68 @@ SelectedDownloadState SelectedDownload() {
         }
     }
     return result;
+}
+SelectedVideoInfo SelectedVideo() {
+    auto& state=State();std::lock_guard guard(state.mutex);
+    return {state.selectedID,state.selectedQuery,state.selectedPlaylist,state.selectedDir,state.selectedConfig,state.playbackAllowed,state.pending.contains(state.selectedDir.string())};
+}
+GlobalNamespace::BeatmapLevel* SelectedLevel() {
+    auto& state=State();std::lock_guard guard(state.mutex);
+    return state.selectedLevelHandle?reinterpret_cast<GlobalNamespace::BeatmapLevel*>(il2cpp_functions::gchandle_get_target(state.selectedLevelHandle)):nullptr;
+}
+std::optional<VideoConfig> LoadLevelVideo(const std::string& id) {
+    std::string playlist;auto& state=State();
+    {std::lock_guard guard(state.mutex);if(NormalizeLevelID(id)==NormalizeLevelID(state.selectedID))playlist=state.selectedPlaylist;}
+    return LoadVideoConfig(VideoDirectory(id),id,playlist);
+}
+bool PlaybackAllowed(const GlobalNamespace::BeatmapKey& key) {
+    auto& state=State();std::lock_guard guard(state.mutex);
+    if(!state.selectedKey)return true;
+    return NormalizeLevelID(static_cast<std::string>(key.levelId))!=NormalizeLevelID(state.selectedID) ||
+        key.difficulty!=state.selectedKey->difficulty || key.beatmapCharacteristic!=state.selectedKey->beatmapCharacteristic || state.playbackAllowed;
+}
+void ChangeSelectedOffset(int delta) {
+    auto& state=State();std::lock_guard guard(state.mutex);
+    if(!state.selectedConfig)return;
+    auto value=static_cast<int64_t>(std::llround(state.selectedConfig->offset*1000))+delta;
+    if(value < -86400000 || value > 86400000)throw std::runtime_error("Offset exceeds one day");
+    SaveVideoOffset(state.selectedDir,state.selectedID,static_cast<int>(value),state.selectedPlaylist);
+    state.selectedConfig=LoadVideoConfig(state.selectedDir,state.selectedID,state.selectedPlaylist);
+}
+void SetSelectedCustomOffset(bool enabled) {
+    auto& state=State();std::lock_guard guard(state.mutex);
+    if(!state.selectedConfig)return;
+    SetVideoCustomOffset(state.selectedDir,state.selectedID,enabled,state.selectedPlaylist);
+    state.selectedConfig=LoadVideoConfig(state.selectedDir,state.selectedID,state.selectedPlaylist);
+}
+void DeleteSelectedConfig() {
+    DeleteSelectedVideo();
+    auto& state=State();std::lock_guard guard(state.mutex);
+    if(state.selectedDir.empty()||state.pending.contains(state.selectedDir.string()))return;
+    std::filesystem::remove(state.selectedDir/"theater-video.json");
+    std::filesystem::remove(state.selectedDir/"cinema-video.json");
+    std::filesystem::create_directories(state.selectedDir);
+    std::ofstream(state.selectedDir/"theater-video.disabled")<<"Disabled by user\n";
+    state.selectedConfig.reset();state.selectedConfigError.clear();state.message="Video configuration deleted";
+}
+void SearchVideos(const std::string& query) {
+    if(query.empty()||query.size()>512)throw std::runtime_error("Enter a search query or a YouTube URL (maximum 512 bytes)");
+    auto& state=State();std::lock_guard guard(state.mutex);
+    if(state.selectedID.empty())throw std::runtime_error("Select a beatmap first");
+    if(!state.bridge)throw std::runtime_error("YouTube downloader unavailable");
+    ++state.search.revision;state.search.results.clear();state.search.busy=true;state.search.query=query;state.search.levelID=state.selectedID;
+    state.search.message="Searching YouTube...";state.searchRequest=query;state.wake.notify_one();
+}
+VideoSearchState SearchResults() {auto& state=State();std::lock_guard guard(state.mutex);return state.search;}
+void ChooseSearchVideo(int index) {
+    StopMenuPreview();
+    auto& state=State();std::lock_guard guard(state.mutex);
+    if(state.search.busy||state.search.levelID!=state.selectedID||index<0||index>=static_cast<int>(state.search.results.size()))return;
+    if(state.pending.contains(state.selectedDir.string())||(state.selectedConfig&&VideoAvailable(*state.selectedConfig)))
+        throw std::runtime_error("Delete the current video before selecting a replacement");
+    const auto& video=state.search.results[index];
+    SaveVideoSource(state.selectedDir,video.url,video.title,video.author,video.duration);
+    state.selectedPlaylist.clear();state.selectedConfig=LoadVideoConfig(state.selectedDir,state.selectedID);state.selectedConfigError.clear();
+    state.search.message="Video selected. Press Download Video.";state.search.results.clear();++state.search.revision;
 }
 }

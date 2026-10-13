@@ -3,6 +3,7 @@
 #include "downloads.hpp"
 #include "download_status_view.hpp"
 #include "video_download_row.hpp"
+#include "video_menu.hpp"
 #include "HMUI/ViewController.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/Transform.hpp"
@@ -16,23 +17,7 @@ namespace {
 void ApplyDownloadOptions() {
     theater::SetDownloadOptions(getModConfig().AutoDownload.GetValue(),getModConfig().MaxVideoHeight.GetValue(),getModConfig().DownloadTimeout.GetValue(),getModConfig().MaxVideoMiB.GetValue());
 }
-void AddDownloadControls(UnityEngine::Transform* parent) {
-    auto label = BSML::Lite::CreateText(parent,"Video download queue",3.f);
-    label->set_richText(false);
-    label->set_enableWordWrapping(true);
-    label->set_alignment(TMPro::TextAlignmentOptions::TopLeft);
-    label->set_overflowMode(TMPro::TextOverflowModes::Overflow);
-    label->get_rectTransform()->set_sizeDelta({80.f,40.f});
-    auto layout = label->get_gameObject()->GetComponent<UnityEngine::UI::LayoutElement*>();
-    if (!layout) layout = label->get_gameObject()->AddComponent<UnityEngine::UI::LayoutElement*>();
-    layout->set_preferredWidth(80.f); layout->set_preferredHeight(40.f); layout->set_flexibleWidth(1.f);
-    auto status = label->get_gameObject()->AddComponent<Theater::DownloadStatusView*>();
-    status->label = label;
-    status->downloadButton = BSML::Lite::CreateUIButton(parent,"Download Video / Retry",[] { theater::RetrySelectedDownload(); });
-    status->downloadButton->set_interactable(false);
-    BSML::Lite::CreateUIButton(parent,"Scan all configured videos",[] { theater::QueueAllVideos(); });
-    BSML::Lite::CreateUIButton(parent,"Cancel downloads",[] { theater::CancelDownloads(); });
-}
+
 }
 void RegisterTheaterSettings() {
     custom_types::Register::AutoRegister();
@@ -43,16 +28,16 @@ void RegisterTheaterSettings() {
         auto parent = BSML::Lite::CreateScrollableSettingsContainer(self->get_transform())->get_transform();
         BSML::Lite::CreateText(parent,"BeatSaberTheater Quest");
         BSML::Lite::CreateToggle(parent,"Enable videos",getModConfig().Enabled.GetValue(),[](bool value) { getModConfig().Enabled.SetValue(value); });
+        BSML::Lite::CreateToggle(parent,"Color blending",getModConfig().ColorBlendingEnabled.GetValue(),[](bool value) { getModConfig().ColorBlendingEnabled.SetValue(value); });
+        BSML::Lite::CreateToggle(parent,"Transparent screen body",getModConfig().TransparencyEnabled.GetValue(),[](bool value) { getModConfig().TransparencyEnabled.SetValue(value); });
         BSML::Lite::CreateIncrementSetting(parent,"Maximum video height",0,180.f,getModConfig().MaxVideoHeight.GetValue(),360.f,1080.f,[](float value) { getModConfig().MaxVideoHeight.SetValue(static_cast<int>(value)); ApplyDownloadOptions(); });
         BSML::Lite::CreateIncrementSetting(parent,"Download timeout (seconds)",0,30.f,getModConfig().DownloadTimeout.GetValue(),30.f,1800.f,[](float value) { getModConfig().DownloadTimeout.SetValue(static_cast<int>(value)); ApplyDownloadOptions(); });
         BSML::Lite::CreateIncrementSetting(parent,"Maximum video size (MiB)",0,128.f,getModConfig().MaxVideoMiB.GetValue(),128.f,2048.f,[](float value) { getModConfig().MaxVideoMiB.SetValue(static_cast<int>(value)); ApplyDownloadOptions(); });
         BSML::Lite::CreateIncrementSetting(parent,"Sync tolerance (seconds)",2,.05f,getModConfig().SyncTolerance.GetValue(),.1f,2.f,[](float value) { getModConfig().SyncTolerance.SetValue(value); });
         BSML::Lite::CreateIncrementSetting(parent,"Prepare timeout (seconds)",0,5.f,getModConfig().PrepareTimeout.GetValue(),5.f,120.f,[](float value) { getModConfig().PrepareTimeout.SetValue(value); });
-        AddDownloadControls(parent);
     },false);
     BSML::Register::RegisterGameplaySetupTab("Theater",[](UnityEngine::GameObject* self,bool first) {
         if (!first) return;
-        auto parent = BSML::Lite::CreateScrollableSettingsContainer(self->get_transform())->get_transform();
-        AddDownloadControls(parent);
+        CreateVideoMenu(self->get_transform());
     },BSML::MenuType::Solo);
 }

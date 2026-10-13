@@ -4,10 +4,10 @@
   "name": "${mod_name}",
   "id": "${mod_id}",
   "author": "neboman11; Quest port contributors",
-  "version": "0.3.7",
+  "version": "0.1.0",
   "packageId": "com.beatgames.beatsaber",
   "packageVersion": "1.40.8_7379",
-  "description": "Manual Cinema map video downloads and playback for Beat Saber Quest 1.40.8",
+  "description": "Cinema/Theater videos, YouTube search, synchronization preview and PC configuration support for Beat Saber Quest 1.40.8",
   "dependencies": [],
   "modFiles": [
     "${binary}"

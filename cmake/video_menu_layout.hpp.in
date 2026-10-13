@@ -1,0 +1,2 @@
+#pragma once
+inline constexpr const char* TheaterVideoMenuBSML = R"BSML(@THEATER_VIDEO_MENU_BSML@)BSML";

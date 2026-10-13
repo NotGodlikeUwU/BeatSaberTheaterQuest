@@ -47,6 +47,8 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/java/bstheater-download.dex" OR NOT E
     message(FATAL_ERROR "Build the Android downloader first: pwsh scripts/build-java.ps1")
 endif()
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/download_dex.S.in ${CMAKE_CURRENT_BINARY_DIR}/download_dex.S @ONLY)
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/resources/video-menu-quest.bsml THEATER_VIDEO_MENU_BSML)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/video_menu_layout.hpp.in ${CMAKE_CURRENT_BINARY_DIR}/video_menu_layout.hpp @ONLY)
 set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/download_dex.S PROPERTIES
     OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/java/bstheater-download.dex;${CMAKE_CURRENT_SOURCE_DIR}/java/bstheater-desugar.dex")
 
@@ -83,8 +85,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/downloa
 # for inline hook
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE -llog)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE bstheaterjs)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE GLESv3 EGL)
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${INCLUDE_DIR})
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${SHARED_DIR})
 
 # beatsaber hook inline hook

@@ -15,8 +15,9 @@ import org.schabi.newpipe.extractor.downloader.Downloader;
 /** Downloads YouTube's Safari HLS rendition and remuxes video without re-encoding. */
 final class HlsVideo {
     static final class Rendition {
-        final String url; final int height, fps;
-        Rendition(String url,int height,int fps){this.url=url;this.height=height;this.fps=fps;}
+        final String url, audioUrl; final int height, fps;
+        Rendition(String url,int height,int fps){this(url,height,fps,null);}
+        Rendition(String url,int height,int fps,String audioUrl){this.url=url;this.height=height;this.fps=fps;this.audioUrl=audioUrl;}
     }
     static Map<String,String> attributes(String text) {
         Map<String,String> result=new HashMap<>();
@@ -27,6 +28,12 @@ final class HlsVideo {
     static List<Rendition> renditions(String base,String text,int maximum) throws IOException {
         if(!text.startsWith("#EXTM3U"))throw new IOException("Invalid YouTube HLS manifest");
         List<Rendition> result=new ArrayList<>();Map<String,String> pending=null;
+        Map<String,String> audioGroups=new HashMap<>();
+        for(String line:text.split("\\r?\\n"))if(line.trim().startsWith("#EXT-X-MEDIA:")) {
+            Map<String,String> entry=attributes(line.trim().substring(13));
+            if("AUDIO".equals(entry.get("TYPE"))&&entry.containsKey("URI")&&entry.containsKey("GROUP-ID"))
+                audioGroups.putIfAbsent(entry.get("GROUP-ID"),VideoDownloader.checkedUrl(new URL(new URL(base),entry.get("URI")).toString()).toString());
+        }
         for(String line:text.split("\\r?\\n")) {
             line=line.trim();
             if(line.startsWith("#EXT-X-STREAM-INF:"))pending=attributes(line.substring(18));
@@ -35,7 +42,7 @@ final class HlsVideo {
                 try {
                     int height=Integer.parseInt(dimensions[1]);int fps=(int)Math.round(Double.parseDouble(pending.getOrDefault("FRAME-RATE","30")));
                     if(height>0 && height<=maximum && pending.getOrDefault("CODECS","").contains("avc1"))
-                        result.add(new Rendition(VideoDownloader.checkedUrl(new URL(new URL(base),line).toString()).toString(),height,fps));
+                        result.add(new Rendition(VideoDownloader.checkedUrl(new URL(new URL(base),line).toString()).toString(),height,fps,audioGroups.get(pending.get("AUDIO"))));
                 }catch(NumberFormatException|IndexOutOfBoundsException ignored){}
                 pending=null;
             }
@@ -117,36 +124,5 @@ final class HlsVideo {
             return new int[]{0,0};
         }finally{extractor.release();}
     }
-    static void remux(File input,File output,long limit) throws IOException {
-        MediaExtractor extractor=new MediaExtractor();MediaMuxer muxer=null;boolean started=false;
-        try {
-            extractor.setDataSource(input.toString());
-            int track=-1;MediaFormat format=null;
-            for(int i=0;i<extractor.getTrackCount();i++) {
-                MediaFormat candidate=extractor.getTrackFormat(i);
-                if("video/avc".equals(candidate.getString(MediaFormat.KEY_MIME))){track=i;format=candidate;break;}
-            }
-            if(track<0)throw new IOException("HLS stream contains no H.264 video");
-            extractor.selectTrack(track);
-            muxer=new MediaMuxer(output.toString(),MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
-            int target=muxer.addTrack(format);muxer.start();started=true;
-            int capacity=format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)?format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE):4*1024*1024;
-            ByteBuffer buffer=ByteBuffer.allocateDirect(Math.max(4*1024*1024,Math.min(16*1024*1024,capacity)));
-            MediaCodec.BufferInfo info=new MediaCodec.BufferInfo();long first=-1,last=-1;int count=0;
-            while(true) {
-                VideoDownloader.checkCancelled();buffer.clear();int size=extractor.readSampleData(buffer,0);if(size<0)break;
-                long time=extractor.getSampleTime();if(first<0)first=time;
-                time-=first;
-                // H.264 B-frames are stored in decode order; their presentation timestamps may go backwards.
-                if(time<0)time=0;
-                info.set(0,size,time,extractor.getSampleFlags()&MediaCodec.BUFFER_FLAG_KEY_FRAME);
-                muxer.writeSampleData(target,buffer,info);last=time;count++;
-                if(output.length()>limit)throw new IOException("HD video exceeds configured size limit");
-                extractor.advance();
-            }
-            if(count==0)throw new IOException("HLS video has no decoded samples");
-            muxer.stop();started=false;
-        }catch(RuntimeException error){throw new IOException("Android could not convert HLS video to MP4",error);}
-        finally{extractor.release();if(muxer!=null){if(started)try{muxer.stop();}catch(RuntimeException ignored){}muxer.release();}}
-    }
+    static void remux(File input,File output,long limit) throws IOException { Mp4Audio.remux(input,output,limit); }
 }

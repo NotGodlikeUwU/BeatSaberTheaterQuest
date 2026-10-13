@@ -1,0 +1,57 @@
+<bg id="menuRoot">
+  <bg id="noVideoRoot" height="30" vertical-fit="PreferredSize">
+    <vertical vertical-fit="PreferredSize" child-expand-height="false" child-control-width="true" child-control-height="true" child-align="MiddleCenter">
+      <text id="noVideoLabel" align="Center" text="No video configured" />
+      <button id="searchButton" text="Search" on-click="SearchClick" />
+    </vertical>
+  </bg>
+  <bg id="detailsRoot">
+    <vertical child-expand-height="false" spacing="0" vertical-fit="PreferredSize" pad-top="-3" child-control-width="true" child-control-height="true" child-align="UpperCenter">
+      <horizontal preferred-width="100" horizontal-fit="PreferredSize" child-control-width="true" child-control-height="true" child-align="MiddleCenter">
+        <text id="titleLabel" font-size="5" align="Center" overflow-mode="Ellipsis" preferred-width="90" text="Video Title" />
+        <icon-button id="deleteConfigButton" align="Right" text=" " horizontal-fit="PreferredSize" vertical-fit="PreferredSize" hover-hint="Delete video configuration&#13;&#10;&#13;&#10;(will also delete the video if downloaded)" on-click="DeleteConfigClick" />
+      </horizontal>
+      <horizontal horizontal-fit="PreferredSize" vertical-fit="PreferredSize" width="50" height="25" child-expand-width="false" child-expand-height="false" child-control-width="true" child-control-height="true">
+        <image id="detailsThumbnail" pref-width="40" pref-height="25" preserve-aspect="true" />
+        <vertical pad-left="3" spacing="0" pref-width="40" child-expand-width="false" vertical-fit="PreferredSize" child-control-width="true" child-control-height="true" child-align="UpperCenter">
+          <text id="authorLabel" font-size="3" align="Left" overflow-mode="Ellipsis" text="Author Name" />
+          <text id="durationLabel" font-size="3" align="Left" overflow-mode="Ellipsis" text="4:20" />
+          <text id="statusLabel" align="Left" color="red" text="Not downloaded" />
+          <button id="mediaButton" text="Delete Video" on-click="MediaClick" />
+        </vertical>
+      </horizontal>
+      <vertical pad-top="2" child-control-width="true" child-control-height="true" vertical-fit="PreferredSize">
+        <vertical id="offsetRoot" child-control-width="true" child-control-height="true" vertical-fit="PreferredSize">
+          <text id="video-offset-label" align="Center" font-size="3" text="Video Offset" />
+          <horizontal horizontal-fit="PreferredSize" spacing="1" child-control-width="true" child-control-height="true" child-align="MiddleCenter">
+            <button id="offset-decrease-button-high" font-size="3" pref-width="10" hover-hint="Starts video later (-1000 ms)" text="---" on-click="OffsetMinusHigh" />
+            <button id="offset-decrease-button-mid" font-size="3" pref-width="10" hover-hint="Starts video later (-100 ms)" text="--" on-click="OffsetMinusMid" />
+            <button id="offset-decrease-button-low" font-size="3" pref-width="10" hover-hint="Starts video later (-20 ms)" text="-" on-click="OffsetMinusLow" />
+            <vertical pref-width="16" child-control-width="true" child-control-height="true" vertical-fit="PreferredSize">
+              <text id="offsetLabel" text="0" pad-left="5" pad-right="5" font-size="5" align="Center" />
+            </vertical>
+            <button id="offset-increase-button-low" font-size="3" pref-width="10" hover-hint="Starts video earlier (+20 ms)" text="+" on-click="OffsetPlusLow" />
+            <button id="offset-increase-button-mid" font-size="3" pref-width="10" hover-hint="Starts video earlier (+100 ms)" text="++" on-click="OffsetPlusMid" />
+            <button id="offset-increase-button-high" font-size="3" pref-width="10" hover-hint="Starts video earlier (+1000 ms)" text="+++" on-click="OffsetPlusHigh" />
+          </horizontal>
+        </vertical>
+        <horizontal id="customizeOffsetRoot" preferred-width="45" child-control-width="true" child-control-height="true">
+          <bool-setting apply-on-change="true" text="Customize offset" value="customizeOffset" bind-value="true" get-event="update-customize-offset" hover-hint="Change the offset that was configured by the mapper.&#13;&#10;&#13;&#10;Only check this if the video is out of sync for you." id="customizeToggle" />
+        </horizontal>
+        <button id="previewButton" hover-hint="Preview video and map with stereo audio" text="Preview" on-click="PreviewClick" />
+      </vertical>
+    </vertical>
+  </bg>
+  <bg id="searchRoot">
+    <horizontal pad-top="-3" pad-bottom="8" pad-left="8" pad-right="8" child-control-width="true" child-control-height="true">
+      <list pad-top="3" id="resultsList" list-width="100" visible-cells="6" select-cell="SelectCell" stick-scrolling="true" show-scrollbar="true" />
+    </horizontal>
+    <text id="searchLabel" active="false" font-size="3" text="Loading Results..." align="Center" anchor-pos-y="5" />
+    <modal-keyboard id="queryKeyboard" on-enter="QueryEntered" clear-on-open="false" show-event="show-keyboard" hide-event="hide-keyboard" move-to-center="true" click-off-closes="true" />
+    <horizontal pad-top="50" child-control-width="true" child-control-height="true">
+      <button text="Go Back" on-click="BackClick" pad-right="7" />
+      <button id="resultDownloadButton" text="Download" on-click="DownloadClick" />
+      <button id="refine-button" text="Refine Search" on-click="RefineClick" />
+    </horizontal>
+  </bg>
+</bg>
