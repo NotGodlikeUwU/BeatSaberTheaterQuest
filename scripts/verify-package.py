@@ -15,7 +15,7 @@ with ZipFile(package) as archive:
     assert manifest["modloader"] == "Scotland2"
     assert manifest["modFiles"] == ["libbstheater.so"]
     assert manifest["libraryFiles"] == ["libbstheaterjs.so"]
-    expected = {"beatsaber-hook": "=6.4.2", "custom-types": "=0.18.4", "paper2_scotland2": "=4.8.0", "songcore": "=1.1.26", "bsml": "=0.4.55"}
+    expected = {"beatsaber-hook": "^6.4.2", "custom-types": "^0.18.4", "paper2_scotland2": "^4.8.0", "songcore": "^1.1.26", "bsml": "^0.4.55"}
     assert {item["id"]: item["version"] for item in manifest["dependencies"]} == expected
     for name in archive.namelist():
         assert "cookie" not in name.lower(), "Account session must never be packaged"
